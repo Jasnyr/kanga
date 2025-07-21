@@ -1,4 +1,4 @@
-1. Instrukcja uruchomienia:
+1. Launch instruction:
 
 	- download the repo (https://github.com/Jasnyr/kanga.git) and open in in your favourite IDE.
 	- (in case it is Eclipse run "maven eclipse:eclipse" to generate required eclipse files)
