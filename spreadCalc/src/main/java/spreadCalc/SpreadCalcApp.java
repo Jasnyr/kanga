@@ -1,0 +1,12 @@
+package spreadCalc;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class SpreadCalcApp {
+
+	public static void main(String[] args) {
+		SpringApplication.run(SpreadCalcApp.class, args);
+	}
+}

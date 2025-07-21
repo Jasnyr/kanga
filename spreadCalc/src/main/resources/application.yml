@@ -1,0 +1,4 @@
+kanga:
+  base-url: https://public.kanga.exchange
+  market-pairs-path: /api/market/pairs
+  orderbook-path: /api/market/orderbook/{pair}
