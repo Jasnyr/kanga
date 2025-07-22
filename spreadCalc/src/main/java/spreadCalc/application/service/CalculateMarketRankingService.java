@@ -30,6 +30,8 @@ import spreadCalc.repository.SpreadCalcResultsService;
 @AllArgsConstructor
 public class CalculateMarketRankingService implements CalculateMarketRankingUseCase {
 
+	private static final double SMALL_SPREAD = 2;
+	private static final Executor VIRTUAL_EXECUTOR = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().factory());
 	private final GetMarketPairsUseCase marketPairsUseCase;
 	private final GetMarketPairOrderbookUseCase marketPairOrderbookUseCase;
 	private final SpreadCalcResultsService calcResultsService;
@@ -37,27 +39,11 @@ public class CalculateMarketRankingService implements CalculateMarketRankingUseC
 	@Override
 	public void calculateMarketRanking() {
 		List<MarketPair> marketPairs = marketPairsUseCase.getMarketPairs();
-		Map<String, MarketSpreadPair> smallSpread = new TreeMap<>();
-		Map<String, MarketSpreadPair> largeSpread = new TreeMap<>();
-		Map<String, MarketSpreadPair> incalculableSpread = new TreeMap<>();
+		SpreadRanking ranking = null;
 
 		try {
-			List<CompletableFuture<OrderBook>> futureOrderBooks = marketPairs.stream().map(this::fetchOrderBook).toList();
-			CompletableFuture.allOf(futureOrderBooks.toArray(new CompletableFuture[0])).get();
-			List<OrderBook> orderBookResults = futureOrderBooks.stream().map(CompletableFuture::join).collect(Collectors.toList());
-
-			for (OrderBook orderbook : orderBookResults) {
-				Double spread = orderbook.calculateSpread();
-				if (spread == null) {
-					incalculableSpread.put(orderbook.ticker_id(), new MarketSpreadPair(orderbook.ticker_id(), "N/A"));
-				} else if (spread > 2) {
-					largeSpread.put(orderbook.ticker_id(), new MarketSpreadPair(orderbook.ticker_id(),
-							BigDecimal.valueOf(spread).setScale(2, RoundingMode.HALF_UP).toString()));
-				} else {
-					smallSpread.put(orderbook.ticker_id(), new MarketSpreadPair(orderbook.ticker_id(),
-							BigDecimal.valueOf(spread).setScale(2, RoundingMode.HALF_UP).toString()));
-				}
-			}
+			List<OrderBook> orderBooks = fetchOrderBooks(marketPairs);
+			ranking = createRankingFromOrderbook(orderBooks);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			e.printStackTrace();
@@ -65,18 +51,41 @@ public class CalculateMarketRankingService implements CalculateMarketRankingUseC
 			e.printStackTrace();
 		}
 
-		SpreadRanking ranking = new SpreadRanking(
+		SpreadCalcResults spreadCalcResults = new SpreadCalcResults(ZonedDateTime.now(ZoneOffset.UTC), ranking);
+		calcResultsService.setSpreadCalcResults(spreadCalcResults);
+	}
+
+	private List<OrderBook> fetchOrderBooks(List<MarketPair> marketPairs) throws InterruptedException, ExecutionException {
+		List<CompletableFuture<OrderBook>> futureOrderBooks = marketPairs.stream().map(this::fetchOrderBookFuture).toList();
+		CompletableFuture.allOf(futureOrderBooks.toArray(new CompletableFuture[0])).get();
+		return futureOrderBooks.stream().map(CompletableFuture::join).collect(Collectors.toList());
+	}
+
+	private CompletableFuture<OrderBook> fetchOrderBookFuture(MarketPair marketPair) {
+		return CompletableFuture.supplyAsync(() -> marketPairOrderbookUseCase.getMarketPairOrderbook(marketPair.ticker_id()), VIRTUAL_EXECUTOR);
+	}
+
+	private SpreadRanking createRankingFromOrderbook(List<OrderBook> orderBookResults) {
+		Map<String, MarketSpreadPair> smallSpread = new TreeMap<>();
+		Map<String, MarketSpreadPair> largeSpread = new TreeMap<>();
+		Map<String, MarketSpreadPair> incalculableSpread = new TreeMap<>();
+		
+		for (OrderBook orderbook : orderBookResults) {
+			Double spread = orderbook.calculateSpread();
+			if (spread == null) {
+				incalculableSpread.put(orderbook.ticker_id(), new MarketSpreadPair(orderbook.ticker_id(), "N/A"));
+			} else if (spread > SMALL_SPREAD) {
+				largeSpread.put(orderbook.ticker_id(), new MarketSpreadPair(orderbook.ticker_id(),
+						BigDecimal.valueOf(spread).setScale(2, RoundingMode.HALF_UP).toString()));
+			} else {
+				smallSpread.put(orderbook.ticker_id(), new MarketSpreadPair(orderbook.ticker_id(),
+						BigDecimal.valueOf(spread).setScale(2, RoundingMode.HALF_UP).toString()));
+			}
+		}
+		
+		return new SpreadRanking(
 				smallSpread.values().toArray(),
 				largeSpread.values().toArray(),
 				incalculableSpread.values().toArray());
-		calcResultsService.setSpreadCalcResults(new SpreadCalcResults(ZonedDateTime.now(ZoneOffset.UTC), ranking));
-	}
-
-	private CompletableFuture<OrderBook> fetchOrderBook(MarketPair marketPair) {
-		Executor virtualThreadExecutor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().factory());
-		return CompletableFuture.supplyAsync(() -> {
-			OrderBook orderbook = marketPairOrderbookUseCase.getMarketPairOrderbook(marketPair.ticker_id());
-			return orderbook;
-		}, virtualThreadExecutor);
 	}
 }
